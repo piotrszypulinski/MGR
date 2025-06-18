@@ -1,0 +1,144 @@
+import yfinance as yf
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+from scipy import stats
+import os
+import json
+import re
+from datetime import datetime, timedelta, date
+
+# Daty rebalancingu - NN
+rebalance_dates_list_nn = ['2023-06-01', '2023-06-22', '2023-08-22', '2023-09-01', '2024-03-01', '2024-07-23', '2025-02-28', '2025-03-03', '2025-04-24']
+last_quotation_day = ['2025-05-01']
+dates_to_index_nn = rebalance_dates_list_nn + last_quotation_day
+
+# Daty rebalancingu - KMeans
+rebalance_dates_list_kmeans = ['2023-05-31', '2023-09-26', '2023-11-14', '2023-12-15', '2024-02-14', '2024-03-15', '2024-09-26', '2024-11-14', '2025-04-04']
+dates_to_index_kmeans = rebalance_dates_list_kmeans + last_quotation_day
+
+with open('spolka_ticker.json') as file:
+  ticker_name_dict = json.load(file)
+
+def get_wig20_real_return(index):
+    # Sztywne daty
+    start_date = '20230101'
+    end_date = '20250501'
+    url = f'https://stooq.com/q/d/l/?s={index}&f={start_date}&t={end_date}&i=d'
+    formal_index = pd.read_csv(url, parse_dates=['Date']).set_index('Date')
+
+    formal_index['Zmiana'] = formal_index['Close'].pct_change() * 100
+    formal_index = formal_index.iloc[1:]
+    formal_index['Zmiana_skumulowana'] = formal_index['Zmiana'].cumsum()
+
+    real_return = formal_index.loc[formal_index.index[-1], 'Zmiana_skumulowana']
+    return real_return
+
+def unpack_data(data_directory, filenames):
+  file_paths = [os.path.join(directory, filename) for filename in filenames]
+
+  data_dict = {}
+  for file in file_paths:
+    date_pattern = r'(\d{4})(\d{2})(\d{2})'
+    match_pattern = re.search(date_pattern, file)
+    groups = match_pattern.groups()
+    year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+    formal_rebalancing_date = pd.to_datetime(f'{year}-{month}-{day}')
+
+    data = pd.read_csv(file)
+    data_dict[formal_rebalancing_date] = data
+
+  formal_rebalancing_dates = list(data_dict.keys())
+  return data_dict, formal_rebalancing_dates
+
+def get_wig20_data(stock_list, start_date, end_date):
+  data = yf.download(stock_list, start_date, end_date, auto_adjust=False)['Adj Close']
+  print(f'Pobrane notowania za okres: od {min(data.index)} do {max(data.index)}')
+  print('----------------------------------------------------------------------------------------')
+
+  return data.pct_change() * 100
+
+def index_calculation(data, weights):
+  data_transformed = data.copy()
+  data_transformed['Zmiana_indeksu'] = sum([data_transformed[x]*weights[x] for x in data_transformed.columns])
+  data_index = data_transformed.iloc[1:]
+  data_index = data_index[['Zmiana_indeksu']]
+
+  return data_index
+
+def get_rebalancing_schedulde(formal_dates, new_dates):
+  new_dates = [pd.Timestamp(date) for date in new_dates]
+
+  schedule = []
+  for new_date in new_dates:
+    last_formal_rebalancing = None
+    for formal_date in formal_dates:
+      if formal_date <= new_date:
+        last_formal_rebalancing = formal_date
+      else:
+        break
+
+    schedule.append({
+        'data_nowego_rebalancingu': new_date,
+        'data_formalnej_rewizji': last_formal_rebalancing
+    })
+
+  return schedule
+
+def my_rebalanced_wig20(data_directory, filenames, new_rebalancing_dates, ticker_2_name):
+  formal_rebalance_data, formal_rebalancing_dates = unpack_data(data_directory, filenames)
+  scheduled_rebalancing = get_rebalancing_schedulde(formal_rebalance_data, new_rebalancing_dates)
+  print(scheduled_rebalancing)
+
+  merged_data = None
+  for i, date in enumerate(new_rebalancing_dates):
+    if i == 0:
+      start_date = '2022-12-30'
+      formal_rebalancing_metadata = formal_rebalance_data[pd.Timestamp('2022-12-20')]
+
+    else:
+      start_date = new_rebalancing_dates[i-1]
+      scheduled_date = scheduled_rebalancing[i]['data_formalnej_rewizji']
+      print(scheduled_date)
+
+      formal_rebalancing_metadata = formal_rebalance_data[scheduled_date]
+
+    end_date = str((datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d'))
+
+    current_stock_names = list(formal_rebalancing_metadata.iloc[:, 0])
+
+    name_ticker_dict = {v: k for k, v in ticker_2_name.items()}
+    ticker_list = [name_ticker_dict.get(name, None) for name in current_stock_names]
+    formal_rebalancing_metadata['Symbol'] = ticker_list
+
+    current_stock_weight = {ticker: weight/100 for ticker, weight in zip(formal_rebalancing_metadata['Symbol'], formal_rebalancing_metadata['Udział (%)'])}
+    assert len(current_stock_names) == 20 and len(current_stock_weight) == 20
+
+    data = get_wig20_data(ticker_list, start_date, end_date)
+    data_with_index = index_calculation(data, current_stock_weight)
+    print(data_with_index)
+
+    if merged_data is None:
+      merged_data = data_with_index
+
+    else:
+      merged_data = pd.concat([merged_data, data_with_index], axis=0)
+
+  print(merged_data)
+  merged_data['Skumulowana_zmiana_indeksu'] = merged_data['Zmiana_indeksu'].cumsum()
+  real_return = merged_data.loc[merged_data.index[-1], 'Skumulowana_zmiana_indeksu']
+
+  return real_return
+
+## WYWOŁANIE 
+directory = 'Rewizje_dane'
+filenames = list(sorted(os.listdir(directory), key=lambda x: x[-11:-5]))
+
+### DLA AUTOENKODERA
+return_rebalancing_nn = my_rebalanced_wig20(directory, filenames, dates_to_index_nn, ticker_name_dict)
+print(return_rebalancing_nn)
+
+### DLA K-MEANS
+return_rebalancing_kmeans = my_rebalanced_wig20(directory, filenames, dates_to_index_kmeans, ticker_name_dict)
+print(return_rebalancing_kmeans)
