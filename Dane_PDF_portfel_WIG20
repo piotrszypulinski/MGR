@@ -1,0 +1,87 @@
+# !pip install pdfplumber
+import pdfplumber
+import pandas as pd
+import re
+from datetime import datetime, date
+import os
+
+def extract_data_from_pdf_list(directory, filenames):
+    file_paths = [os.path.join(directory, filename) for filename in filenames]
+
+    result_dict = {}
+    for i, file_path in enumerate(file_paths):
+      print(f'Plik nr {i}:', file_path)
+      try:
+          date_key = extract_date_from_filename(file_path)
+          print('---'*10)
+          print(date_key)
+          extracted_data = extract_data_from_pdf(file_path)
+          if extracted_data:
+              df = pd.DataFrame(extracted_data, columns=['Nazwa', 'Udział (%)'])
+              result_dict[date_key] = df
+          else:
+              print(f"Brak danych do wyciągnięcia z pliku: {file_path}")
+
+      except Exception as e:
+          print(f"Błąd w przetwarzania pliku {file_path}: {str(e)}")
+
+    return result_dict
+
+def extract_date_from_filename(file_path):
+  filename = os.path.basename(file_path)
+
+  date_pattern = r'(\d{4})(\d{2})(\d{2})'
+  match_pattern = re.search(date_pattern, filename)
+  groups = match_pattern.groups()
+  year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+
+  found_date = date(year, month, day)
+  print(found_date)
+
+  return found_date
+
+def extract_data_from_pdf(filename):
+  extracted_data = []
+  try:
+    with pdfplumber.open(filename) as pdf:
+      pages_to_process = len(pdf.pages)
+      print('Liczba stron w dokumencie:', pages_to_process)
+
+      for i in range(pages_to_process):
+        page = pdf.pages[i]
+        table = page.extract_table()
+
+        if table and len(table) > 1:
+          for row in table[1:]:
+            if row and len(row) > 0 and row[0]:
+              print(row)
+              text = row[0]
+              text = text.strip("[]'\"")
+
+              parts = text.split()
+              print('Szerokość odczytanego tekstu to:', len(parts))
+
+              name = parts[2]
+              weight = parts[-1]
+
+              extracted_data.append((name, weight))
+
+  except Exception as e:
+    print(f"Błąd podczas przetwarzania pliku {filename}: {str(e)}")
+
+  return extracted_data
+
+def save_datasets(directory, results):
+  for key, value in results.items():
+    value.iloc[:, 1] = [x.replace(',', '.') for x in value.iloc[:, 1]]
+
+    output_date_format = datetime.strftime(key, '%Y%m%d')
+    output_file = f'rewizja_portfela_WIG_dane_{output_date_format}.csv'
+    value.to_csv(os.path.join(directory, output_file), index=False)
+
+directory = 'Rewizje_portfela_WIG'
+filenames = list(sorted(os.listdir(directory), key=lambda x: x[-11:-5]))
+
+results_dict = extract_data_from_pdf_list(directory, filenames)
+
+save_datasets(directory, results_dict)
