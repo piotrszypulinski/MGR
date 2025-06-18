@@ -4,21 +4,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Wczytanie danych treningowych
-with open('/content/drive/MyDrive/Rgm/Dane/Maj/dane_wolumen.pkl', 'rb') as file:
+with open('dane_wolumen.pkl', 'rb') as file:
     train_data_volume_raw = pickle.load(file)
 
 train_data_volume = train_data_volume_raw.iloc[1:]
 
-with open('/content/drive/MyDrive/Rgm/Dane/Maj/dane_zmiana_ceny.pkl', 'rb') as file:
+with open('dane_zmiana_ceny.pkl', 'rb') as file:
     train_data_price = pickle.load(file)
 
   # Wczytanie danych testowych
-with open('/content/drive/MyDrive/Rgm/Dane/Maj/dane_wolumen_test.pkl', 'rb') as file:
+with open('dane_wolumen_test.pkl', 'rb') as file:
     test_data_volume_raw = pickle.load(file)
 
 test_data_volume = test_data_volume_raw.iloc[1:]
 
-with open('/content/drive/MyDrive/Rgm/Dane/Maj/dane_zmiana_ceny_test.pkl', 'rb') as file:
+with open('dane_zmiana_ceny_test.pkl', 'rb') as file:
     test_data_price = pickle.load(file)
 
 # Proste przekształcenia danych (sprowadzenie zmian cen do logarytmów a wolumenu bezwzględnego do względnego)
@@ -68,7 +68,6 @@ testset = torch.tensor(testset, dtype=torch.float32)
 
 print('Wektor treningowy:', trainset.size())
 print('Wektor testowy:', testset.size())
-
 
 class MyDataset(Dataset):
     def __init__(self, data):
@@ -156,7 +155,7 @@ from datetime import datetime
 
 date_now = datetime.strftime(datetime.now(), '%Y%m%d')
 
-directory = ''
+directory = 'Modele'
 if not os.path.exists(directory):
   os.mkdir(directory)
 
@@ -232,11 +231,9 @@ plt.title('Wpływ hiperparametru learning_rate na stratę')
 plt.grid(True)
 plt.tight_layout()
 
-save_path_lr = ''
+save_path_lr = 'wplyw_lr_na_strate.png'
 plt.savefig(save_path_lr)
 plt.show()
-
-
 
 ## K-MEANS
 from sklearn.metrics import silhouette_score
@@ -274,7 +271,7 @@ plt.ylabel('Wartość inercji')
 plt.xticks(k_range)
 plt.tight_layout()
 
-save_path_elbow = ''
+save_path_elbow = 'wykres_inercji.png'
 plt.savefig(save_path_elbow)
 plt.show()
 
@@ -299,7 +296,7 @@ ax.set_xlabel('PCA_1')
 ax.set_ylabel('PCA_2')
 plt.tight_layout()
 
-save_path_clusters = ''
+save_path_clusters = 'klastry_kmeans_2d.png'
 plt.savefig(save_path_clusters)
 plt.show()
 
@@ -322,7 +319,43 @@ ax.set_ylabel('t-SNE-2')
 ax.set_zlabel('t-SNE-3')
 plt.tight_layout()
 
-
-save_path_tsne = ''
+save_path_tsne = 'klastry_kmeans_3d.png'
 plt.savefig(save_path_tsne)
 plt.show()
+
+## Wyznaczenie dni do rewizji 
+latents_test = []
+
+with torch.no_grad():
+  for batch_data in test_dataloader:
+    latent_test = model.encoder(batch_data.to(device))
+    latents_test.append(latent_test.cpu())
+
+latents_test = torch.cat(latents_test).numpy()
+print(type(latents_test))
+
+latents_test_std = scaler.transform(latents_test)
+
+# Predykcja
+labels_test = kmeans_model.predict(latents_test_std)
+print(np.unique(labels_test))
+
+# Znalezienie odstających punktów
+distances = np.linalg.norm(latents_test_std - kmeans_model.cluster_centers_[labels_test], axis=1)
+print(distances)
+
+kmeans_thresholds = {}
+for cluster in list(np.unique(labels_test)):
+  print(cluster)
+  thr = np.percentile(distances[labels_test == cluster], 99)
+  kmeans_thresholds[cluster] = float(thr)
+
+outliers = np.array([distance > kmeans_thresholds[cluster] for distance, cluster in zip(distances, labels_test)])
+
+print(f"Zbiór testowy zawiera {outliers.sum()} punktów uznanych za odstające w zbiorze {len(outliers)} obserwacji!")
+
+outlier_idx = np.where(outliers)[0]
+print(outlier_idx)
+
+kmeans_outliers_dates_098 = [testset_raw.index[i] for i in outlier_idx]
+print(kmeans_outliers_dates_098)
