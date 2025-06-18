@@ -1,3 +1,3 @@
 # MGR
 
-Przestrzeń wykonawcza dla projektu badawczego pracy naukowej. 
+Przestrzeń wykonawcza dla projektu badawczego pracy magisterskiej pod tytułem: "OPRACOWANIE INDEKSU GIEŁDOWEGO NA GPW W OPARCIU O POPRAWĘ REKOMENDACJI ANALITYKÓW Z REBALANCINGIEM WYZNACZANYM PRZEZ SIEĆ NEURONOWĄ. 
